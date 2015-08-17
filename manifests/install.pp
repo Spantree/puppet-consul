@@ -15,7 +15,7 @@ class consul::install {
 
   case $consul::install_method {
     'url': {
-      if $::operatingsystem != 'darwin' {
+      if $::operatingsystem != 'darwin' and ! defined(Package['unzip']) {
         ensure_packages(['unzip'], { 'before' => Staging::File['consul.zip'] })
       }
       staging::file { 'consul.zip':

@@ -67,25 +67,6 @@ describe 'consul' do
     it { should_not contain_exec('join consul wan') }
   end
 
-  context 'Require unzip package when installing via URL' do
-    it { should contain_staging__file('consul.zip').that_requires('Package[unzip]') }
-  end
-
-  context "Require unzip package when installing UI via URL" do
-    let(:params) {{
-      :config_hash => {
-        'data_dir' => '/dir1',
-        'ui_dir'   => '/dir1/dir2',
-      },
-    }}
-    it { should contain_staging__deploy('consul_web_ui.zip').that_requires('Package[unzip]') }
-  end
-
-  context 'OS X should not contain unzip package' do
-    let(:facts) {{ :operatingsystem => 'darwin' }}
-    it { should_not contain_package('unzip') }
-  end
-
   context 'When requesting to install via a package with defaults' do
     let(:params) {{
       :install_method => 'package'
@@ -252,6 +233,7 @@ describe 'consul' do
           'server' => false,
           'ports' => {
             'http' => 1,
+            'rpc'  => '8300',
           },
       },
       :config_hash => {
@@ -268,6 +250,26 @@ describe 'consul' do
     it { should contain_file('consul config.json').with_content(/"server":true/) }
     it { should contain_file('consul config.json').with_content(/"http":-1/) }
     it { should contain_file('consul config.json').with_content(/"https":8500/) }
+    it { should contain_file('consul config.json').with_content(/"rpc":8300/) }
+  end
+
+  context 'When pretty config is true' do
+    let(:params) {{
+      :pretty_config => true,
+      :config_hash => {
+          'bootstrap_expect' => '5',
+          'server' => true,
+          'ports' => {
+            'http'  => -1,
+            'https' => 8500,
+          },
+      }
+    }}
+    it { should contain_file('consul config.json').with_content(/"bootstrap_expect": 5,/) }
+    it { should contain_file('consul config.json').with_content(/"server": true/) }
+    it { should contain_file('consul config.json').with_content(/"http": -1,/) }
+    it { should contain_file('consul config.json').with_content(/"https": 8500/) }
+    it { should contain_file('consul config.json').with_content(/"ports": {/) }
   end
 
   context "When asked not to manage the user" do
@@ -319,6 +321,56 @@ describe 'consul' do
     it { should contain_group('custom_consul_group').with(:ensure => :present) }
     it { should contain_file('/etc/init/consul.conf').with_content(/env USER=custom_consul_user/) }
     it { should contain_file('/etc/init/consul.conf').with_content(/env GROUP=custom_consul_group/) }
+  end
+
+  context "When consul is reloaded" do
+    let (:params) {{
+      :services => {
+        'test_service1' => {}
+      }
+    }}
+    let (:facts) {{
+      :ipaddress_lo => '127.0.0.1'
+    }}
+    it {
+      should contain_exec('reload consul service').
+        with_command('consul reload -rpc-addr=127.0.0.1:8400')
+    }
+  end
+
+  context "When consul is reloaded on a custom port" do
+    let (:params) {{
+      :services => {
+        'test_service1' => {}
+      },
+      :config_hash => {
+        'ports' => {
+          'rpc' => '9999'
+        },
+        'addresses' => {
+          'rpc' => 'consul.example.com'
+        }
+      }
+    }}
+    it {
+      should contain_exec('reload consul service').
+        with_command('consul reload -rpc-addr=consul.example.com:9999')
+    }
+  end
+
+  context "When consul is reloaded with a default client_addr" do
+    let (:params) {{
+      :services => {
+        'test_service1' => {}
+      },
+      :config_hash => {
+        'client_addr' => '192.168.34.56',
+      }
+    }}
+    it {
+      should contain_exec('reload consul service').
+        with_command('consul reload -rpc-addr=192.168.34.56:8400')
+    }
   end
 
   context "When the user provides a hash of services" do
@@ -394,6 +446,119 @@ describe 'consul' do
     it { should contain_exec('reload consul service')  }
   end
 
+  context "When using sysv" do
+    let (:params) {{
+      :init_style => 'sysv'
+    }}
+    let (:facts) {{
+      :ipaddress_lo => '127.0.0.1'
+    }}
+    it { should contain_class('consul').with_init_style('sysv') }
+    it {
+      should contain_file('/etc/init.d/consul').
+        with_content(/-rpc-addr=127.0.0.1:8400/)
+    }
+  end
+
+  context "When overriding default rpc port on sysv" do
+    let (:params) {{
+      :init_style => 'sysv',
+      :config_hash => {
+        'ports' => {
+          'rpc' => '9999'
+        },
+        'addresses' => {
+          'rpc' => 'consul.example.com'
+        }
+      }
+    }}
+    it { should contain_class('consul').with_init_style('sysv') }
+    it {
+      should contain_file('/etc/init.d/consul').
+        with_content(/-rpc-addr=consul.example.com:9999/)
+    }
+  end
+
+  context "When rpc_addr defaults to client_addr on sysv" do
+    let (:params) {{
+      :init_style => 'sysv',
+      :config_hash => {
+        'client_addr' => '192.168.34.56',
+      }
+    }}
+    it { should contain_class('consul').with_init_style('sysv') }
+    it {
+      should contain_file('/etc/init.d/consul').
+        with_content(/-rpc-addr=192.168.34.56:8400/)
+    }
+  end
+
+  context "When using debian" do
+    let (:params) {{
+      :init_style => 'debian'
+    }}
+    let (:facts) {{
+      :ipaddress_lo => '127.0.0.1'
+    }}
+    it { should contain_class('consul').with_init_style('debian') }
+    it {
+      should contain_file('/etc/init.d/consul').
+        with_content(/-rpc-addr=127.0.0.1:8400/)
+    }
+  end
+
+  context "When overriding default rpc port on debian" do
+    let (:params) {{
+      :init_style => 'debian',
+      :config_hash => {
+        'ports' => {
+          'rpc' => '9999'
+        },
+        'addresses' => {
+          'rpc' => 'consul.example.com'
+        }
+      }
+    }}
+    it { should contain_class('consul').with_init_style('debian') }
+    it {
+      should contain_file('/etc/init.d/consul').
+        with_content(/-rpc-addr=consul.example.com:9999/)
+    }
+  end
+
+  context "When using upstart" do
+    let (:params) {{
+      :init_style => 'upstart'
+    }}
+    let (:facts) {{
+      :ipaddress_lo => '127.0.0.1'
+    }}
+    it { should contain_class('consul').with_init_style('upstart') }
+    it {
+      should contain_file('/etc/init/consul.conf').
+        with_content(/-rpc-addr=127.0.0.1:8400/)
+    }
+  end
+
+  context "When overriding default rpc port on upstart" do
+    let (:params) {{
+      :init_style => 'upstart',
+      :config_hash => {
+        'ports' => {
+          'rpc' => '9999'
+        },
+        'addresses' => {
+          'rpc' => 'consul.example.com'
+        }
+      }
+    }}
+    it { should contain_class('consul').with_init_style('upstart') }
+    it {
+      should contain_file('/etc/init/consul.conf').
+        with_content(/-rpc-addr=consul.example.com:9999/)
+    }
+  end
+
   context "On a redhat 6 based OS" do
     let(:facts) {{
       :operatingsystem => 'CentOS',
@@ -402,6 +567,15 @@ describe 'consul' do
 
     it { should contain_class('consul').with_init_style('sysv') }
     it { should contain_file('/etc/init.d/consul').with_content(/daemon --user=consul/) }
+  end
+
+  context "On an Archlinux based OS" do
+    let(:facts) {{
+      :operatingsystem => 'Archlinux',
+    }}
+
+    it { should contain_class('consul').with_init_style('systemd') }
+    it { should contain_file('/lib/systemd/system/consul.service').with_content(/consul agent/) }
   end
 
   context "On an Amazon based OS" do
